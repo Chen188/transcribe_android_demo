@@ -30,7 +30,7 @@ Open this folder in Android Studio. It will detect the Gradle project automatica
 
 ### 2. Configure AWS credentials
 
-Edit `gradle.properties` in the project root and fill in your values:
+Edit `local.properties` in the project root (create it if it doesn't exist) and add your values:
 
 ```properties
 AWS_REGION=us-east-1
@@ -38,7 +38,9 @@ AWS_ACCESS_KEY=YOUR_ACCESS_KEY_HERE
 AWS_SECRET_KEY=YOUR_SECRET_KEY_HERE
 ```
 
-These are injected into `BuildConfig` at compile time. **Do not commit this file with real credentials.**
+These are injected into `BuildConfig` at compile time. `local.properties` is already in `.gitignore` so it will not be committed.
+
+Alternatively, you can enter credentials at runtime in the app's **Settings** tab.
 
 ### 3. Sync and build
 
@@ -81,12 +83,23 @@ Deploy to an emulator (API 26+) or a physical device. The app requires:
 ```
 app/
   src/main/
-    kotlin/.../MainActivity.kt   # All app logic (streaming, batch, S3 upload)
-    res/layout/activity_main.xml # Single-activity UI layout
-    assets/test_audio.pcm        # Bundled 16kHz mono 16-bit PCM test audio
+    kotlin/.../
+      MainActivity.kt                  # Host activity with bottom navigation
+      audio/AudioUtils.kt              # PCM-to-WAV conversion utilities
+      aws/AwsClientFactory.kt          # AWS SDK client builders
+      aws/AwsPrefs.kt                  # Credential storage (SharedPreferences + BuildConfig)
+      ui/batch/BatchFragment.kt        # Batch transcription UI
+      ui/realtime/RealtimeFragment.kt  # Streaming transcription UI
+      ui/settings/SettingsFragment.kt  # AWS credential configuration UI
+    res/layout/
+      activity_main.xml                # Main layout with bottom navigation
+      fragment_batch.xml               # Batch tab layout
+      fragment_realtime.xml            # Realtime tab layout
+      fragment_settings.xml            # Settings tab layout
+    assets/test_audio.pcm              # Bundled 16kHz mono 16-bit PCM test audio
     AndroidManifest.xml
-build.gradle                     # Root build file (Kotlin & AGP versions)
-app/build.gradle                 # App dependencies (AWS SDK, AndroidX)
-gradle.properties                # AWS credentials (placeholder)
+build.gradle                           # Root build file (Kotlin & AGP versions)
+app/build.gradle                       # App dependencies (AWS SDK, AndroidX)
+local.properties                       # AWS credentials (gitignored)
 settings.gradle
 ```
