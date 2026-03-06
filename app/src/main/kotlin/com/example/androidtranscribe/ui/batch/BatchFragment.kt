@@ -14,10 +14,13 @@ import aws.sdk.kotlin.services.transcribe.model.LanguageCode
 import aws.sdk.kotlin.services.transcribe.model.ListTranscriptionJobsRequest
 import aws.sdk.kotlin.services.transcribe.model.Media
 import aws.sdk.kotlin.services.transcribe.model.MediaFormat
+import aws.sdk.kotlin.services.transcribe.model.Settings
 import aws.sdk.kotlin.services.transcribe.model.StartTranscriptionJobRequest
 import aws.sdk.kotlin.services.transcribe.model.TranscriptionJobStatus
 import aws.smithy.kotlin.runtime.content.ByteStream
+import aws.smithy.kotlin.runtime.content.decodeToString
 import com.example.androidtranscribe.R
+import com.example.androidtranscribe.audio.AudioPreviewPlayer
 import com.example.androidtranscribe.audio.AudioUtils
 import com.example.androidtranscribe.aws.AwsClientFactory
 import com.example.androidtranscribe.databinding.FragmentBatchBinding
@@ -33,6 +36,7 @@ class BatchFragment : Fragment() {
     private val binding get() = _binding!!
 
     private var uploadedS3Uri: String? = null
+    private val previewPlayer = AudioPreviewPlayer()
 
     private val supportedLanguages = linkedMapOf(
         "English (US)" to LanguageCode.EnUs,
@@ -81,6 +85,15 @@ class BatchFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Test file spinner
+        val testFiles = arrayOf(
+            getString(R.string.test_file_single),
+            getString(R.string.test_file_multi),
+        )
+        binding.spinnerTestFile.adapter = ArrayAdapter(
+            requireContext(), android.R.layout.simple_spinner_dropdown_item, testFiles,
+        )
 
         // Bucket spinner (empty until loaded)
         binding.spinnerBucket.adapter = ArrayAdapter(
@@ -134,6 +147,18 @@ class BatchFragment : Fragment() {
             requireContext(), android.R.layout.simple_spinner_dropdown_item, outputOptions,
         )
 
+        // Speaker identification
+        binding.spinnerMaxSpeakers.adapter = ArrayAdapter(
+            requireContext(),
+            android.R.layout.simple_spinner_dropdown_item,
+            (2..10).map { it.toString() },
+        )
+        binding.spinnerMaxSpeakers.setSelection(3) // default to 5 speakers
+        binding.switchSpeakerId.setOnCheckedChangeListener { _, isChecked ->
+            binding.layoutMaxSpeakers.visibility = if (isChecked) View.VISIBLE else View.GONE
+        }
+
+        binding.btnPreview.setOnClickListener { togglePreview() }
         binding.btnRefresh.setOnClickListener { loadBuckets() }
         binding.btnUpload.setOnClickListener { uploadTestFile() }
         binding.btnReset.setOnClickListener { resetUpload() }
@@ -169,8 +194,28 @@ class BatchFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        previewPlayer.stop()
         _binding = null
         super.onDestroyView()
+    }
+
+    private fun togglePreview() {
+        if (previewPlayer.isPlaying) {
+            previewPlayer.stop()
+            binding.btnPreview.text = getString(R.string.btn_preview)
+            return
+        }
+        val fileName = if (binding.spinnerTestFile.selectedItemPosition == 1) {
+            "test_audio_multi_speaker.wav"
+        } else {
+            "test_audio.pcm"
+        }
+        binding.btnPreview.text = getString(R.string.btn_stop_preview)
+        viewLifecycleOwner.lifecycleScope.launch {
+            previewPlayer.play(requireContext(), fileName) {
+                _binding?.btnPreview?.text = getString(R.string.btn_preview)
+            }
+        }
     }
 
     // ==================== S3 Upload ====================
@@ -213,14 +258,26 @@ class BatchFragment : Fragment() {
             return
         }
 
+        val isMultiSpeaker = binding.spinnerTestFile.selectedItemPosition == 1
+
         viewLifecycleOwner.lifecycleScope.launch {
             val s3Client = AwsClientFactory.s3(requireContext())
             try {
-                val pcmBytes = withContext(Dispatchers.IO) {
-                    requireContext().assets.open("test_audio.pcm").readBytes()
+                val wavBytes = if (isMultiSpeaker) {
+                    withContext(Dispatchers.IO) {
+                        requireContext().assets.open("test_audio_multi_speaker.wav").readBytes()
+                    }
+                } else {
+                    val pcmBytes = withContext(Dispatchers.IO) {
+                        requireContext().assets.open("test_audio.pcm").readBytes()
+                    }
+                    AudioUtils.wrapPcmInWav(pcmBytes)
                 }
-                val wavBytes = AudioUtils.wrapPcmInWav(pcmBytes)
-                val key = "transcribe-test/test_audio.wav"
+                val key = if (isMultiSpeaker) {
+                    "transcribe-test/test_audio_multi_speaker.wav"
+                } else {
+                    "transcribe-test/test_audio.wav"
+                }
 
                 withContext(Dispatchers.IO) {
                     s3Client.putObject(PutObjectRequest {
@@ -310,6 +367,13 @@ class BatchFragment : Fragment() {
                             ]
                         }
                     }
+                    if (binding.switchSpeakerId.isChecked) {
+                        settings = Settings {
+                            showSpeakerLabels = true
+                            maxSpeakerLabels = binding.spinnerMaxSpeakers.selectedItem
+                                .toString().toInt()
+                        }
+                    }
                     if (outputBucket != null) {
                         outputBucketName = outputBucket
                     }
@@ -371,24 +435,143 @@ class BatchFragment : Fragment() {
                 when (status) {
                     TranscriptionJobStatus.Completed -> {
                         val uri = AudioUtils.toS3Uri(job.transcript?.transcriptFileUri)
-                        sb.appendLine("Transcript URI:\n$uri")
-                        sb.appendLine(
-                            "\nDownload the JSON from the URI above to view the full transcript.",
-                        )
+                        sb.appendLine("Transcript URI: $uri")
+                        binding.txtBatchResult.text = sb.toString()
+                        // Fetch and display the transcript content
+                        fetchAndDisplayTranscript(uri, sb)
                     }
                     TranscriptionJobStatus.Failed -> {
                         sb.appendLine("Failure reason: ${job.failureReason}")
+                        binding.txtBatchResult.text = sb.toString()
                     }
                     else -> {
                         sb.appendLine("The job is still in progress. Check again shortly.")
+                        binding.txtBatchResult.text = sb.toString()
                     }
                 }
-
-                binding.txtBatchResult.text = sb.toString()
             } catch (e: Exception) {
                 binding.txtBatchResult.text = getString(R.string.msg_error_generic, e.message)
             } finally {
                 withContext(Dispatchers.IO) { client.close() }
+            }
+        }
+    }
+
+    private fun fetchAndDisplayTranscript(s3Uri: String?, header: StringBuilder) {
+        if (s3Uri == null) return
+        val parsed = AudioUtils.parseS3Uri(s3Uri) ?: return
+        val (bucket, key) = parsed
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            binding.txtBatchResult.text = header.toString() + "\nLoading transcript..."
+            val s3Client = AwsClientFactory.s3(requireContext())
+            try {
+                val jsonStr = withContext(Dispatchers.IO) {
+                    s3Client.getObject(
+                        aws.sdk.kotlin.services.s3.model.GetObjectRequest {
+                            this.bucket = bucket
+                            this.key = key
+                        },
+                    ) { output ->
+                        output.body?.decodeToString() ?: ""
+                    }
+                }
+                val sb = StringBuilder(header)
+                sb.appendLine()
+                parseTranscriptJson(jsonStr, sb)
+                binding.txtBatchResult.text = sb.toString()
+            } catch (e: Exception) {
+                binding.txtBatchResult.text =
+                    header.toString() + "\nFailed to load transcript: ${e.message}"
+            } finally {
+                withContext(Dispatchers.IO) { s3Client.close() }
+            }
+        }
+    }
+
+    private fun parseTranscriptJson(jsonStr: String, sb: StringBuilder) {
+        val root = org.json.JSONObject(jsonStr)
+        val results = root.optJSONObject("results") ?: return
+
+        // Full transcript
+        val transcripts = results.optJSONArray("transcripts")
+        if (transcripts != null && transcripts.length() > 0) {
+            val text = transcripts.getJSONObject(0).optString("transcript", "")
+            sb.appendLine("━━━ Transcript ━━━")
+            sb.appendLine(text)
+        }
+
+        val items = results.optJSONArray("items") ?: return
+
+        // Collect speaker labels and language codes from items
+        val allSpeakers = mutableSetOf<String>()
+        val allLanguages = mutableSetOf<String>()
+        for (i in 0 until items.length()) {
+            val item = items.getJSONObject(i)
+            item.optString("speaker_label", "").let { if (it.isNotEmpty()) allSpeakers.add(it) }
+            item.optString("language_code", "").let { if (it.isNotEmpty()) allLanguages.add(it) }
+        }
+
+        // Speaker segments
+        if (allSpeakers.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("━━━ Speakers (${allSpeakers.size}) ━━━")
+
+            data class Segment(val speaker: String, val startTime: String, val words: StringBuilder)
+
+            val segments = mutableListOf<Segment>()
+            var curSpeaker: String? = null
+            for (i in 0 until items.length()) {
+                val item = items.getJSONObject(i)
+                val type = item.optString("type", "")
+                val speaker = item.optString("speaker_label", "")
+                val content = item.optJSONArray("alternatives")
+                    ?.optJSONObject(0)?.optString("content", "") ?: ""
+
+                if (type == "pronunciation") {
+                    if (speaker != curSpeaker) {
+                        val startTime = item.optString("start_time", "?")
+                        segments.add(Segment(speaker, startTime, StringBuilder(content)))
+                        curSpeaker = speaker
+                    } else if (segments.isNotEmpty()) {
+                        segments.last().words.append(" ").append(content)
+                    }
+                } else if (type == "punctuation" && segments.isNotEmpty()) {
+                    segments.last().words.append(content)
+                }
+            }
+            for (seg in segments) {
+                sb.appendLine("[${seg.startTime}s] ${seg.speaker}: ${seg.words}")
+            }
+        }
+
+        // Language segments
+        if (allLanguages.size > 1) {
+            sb.appendLine()
+            sb.appendLine("━━━ Languages (${allLanguages.joinToString()}) ━━━")
+
+            var curLang: String? = null
+            val langSegments = mutableListOf<Pair<String, StringBuilder>>()
+            for (i in 0 until items.length()) {
+                val item = items.getJSONObject(i)
+                val type = item.optString("type", "")
+                val lang = item.optString("language_code", "")
+                val content = item.optJSONArray("alternatives")
+                    ?.optJSONObject(0)?.optString("content", "") ?: ""
+
+                if (type == "pronunciation") {
+                    if (lang != curLang) {
+                        langSegments.add(lang to StringBuilder(content))
+                        curLang = lang
+                    } else if (langSegments.isNotEmpty()) {
+                        langSegments.last().second.append(" ").append(content)
+                    }
+                } else if (type == "punctuation" && langSegments.isNotEmpty()) {
+                    langSegments.last().second.append(content)
+                }
+            }
+            for ((lang, text) in langSegments) {
+                sb.appendLine("[$lang] $text")
             }
         }
     }

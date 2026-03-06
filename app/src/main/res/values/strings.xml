@@ -29,9 +29,12 @@
     <string name="label_audio_source">Audio Source</string>
     <string name="label_transcription_output">Transcription Output</string>
     <string name="source_microphone">Microphone</string>
-    <string name="source_test_file">Test File</string>
+    <string name="source_test_file">Test File (Single Speaker, EN)</string>
+    <string name="source_test_file_multi">Test File (Multi-Speaker, EN+ZH)</string>
     <string name="btn_start_streaming">Start Streaming</string>
     <string name="btn_stop_streaming">Stop Streaming</string>
+    <string name="btn_preview">Preview</string>
+    <string name="btn_stop_preview">Stop</string>
 
     <!-- Batch tab -->
     <string name="batch_title">Batch Transcription</string>
@@ -50,10 +53,15 @@
     <string name="label_candidate_languages">Candidate Languages</string>
     <string name="dialog_title_languages">Candidate Languages</string>
 <string name="language_mode_hint">Auto-detect identifies the language automatically. Multi-language requires 2+ candidate languages (one dialect per language).</string>
+    <string name="label_speaker_id">Enable Speaker Identification</string>
+    <string name="label_max_speakers">Max speakers:</string>
     <string name="msg_select_at_least_two">Select at least 2 candidate languages</string>
     <string name="msg_one_dialect_per_language">Note: select only one dialect per language (e.g. English US or English UK, not both).</string>
     <string name="hint_job_name">Job name (optional)</string>
     <string name="btn_refresh">Refresh</string>
+    <string name="label_test_file">Test File</string>
+    <string name="test_file_single">test_audio.pcm (Single Speaker, EN)</string>
+    <string name="test_file_multi">test_audio_multi_speaker.wav (Multi-Speaker, EN+ZH)</string>
     <string name="btn_upload_s3">Upload Test File to S3</string>
     <string name="btn_reset">Reset</string>
     <string name="btn_start_job">Start Transcription Job</string>

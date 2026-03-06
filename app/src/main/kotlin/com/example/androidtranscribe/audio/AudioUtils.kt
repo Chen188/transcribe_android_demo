@@ -50,4 +50,10 @@ object AudioUtils {
         virtualStyle.find(url)?.let { return "s3://${it.groupValues[1]}/${it.groupValues[2]}" }
         return url
     }
+
+    /** Parse "s3://bucket/key" into (bucket, key), or null if invalid. */
+    fun parseS3Uri(s3Uri: String): Pair<String, String>? {
+        val match = Regex("^s3://([^/]+)/(.+)$").find(s3Uri) ?: return null
+        return match.groupValues[1] to match.groupValues[2]
+    }
 }
