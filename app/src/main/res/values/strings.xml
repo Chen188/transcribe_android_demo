@@ -1,6 +1,83 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
-    <string name="app_name">Android Transcribe</string>
+    <string name="app_name">Transcribe</string>
+    <string name="toolbar_title">Transcribe</string>
+
+    <!-- Navigation -->
+    <string name="nav_realtime">Realtime</string>
+    <string name="nav_batch">Batch</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Settings tab -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_subtitle">Configure AWS credentials for Transcribe</string>
+    <string name="label_aws_credentials">AWS Credentials</string>
+    <string name="label_status">Status</string>
+    <string name="hint_aws_region">AWS Region (e.g. us-east-1)</string>
+    <string name="hint_access_key">Access Key ID</string>
+    <string name="hint_secret_key">Secret Access Key</string>
+    <string name="btn_save">Save Credentials</string>
+    <string name="msg_region_required">Region is required</string>
+    <string name="msg_keys_required">Both Access Key and Secret Key are required</string>
+    <string name="msg_credentials_saved">Credentials saved</string>
+    <string name="msg_credentials_configured">Configured\nRegion: %1$s\nAccess Key: %2$s</string>
+    <string name="msg_credentials_not_configured">Not configured — enter your AWS credentials above</string>
+
+    <!-- Realtime tab -->
+    <string name="realtime_title">Real-time Streaming</string>
+    <string name="realtime_subtitle">Transcribe audio from microphone or file in real time</string>
+    <string name="label_audio_source">Audio Source</string>
+    <string name="label_transcription_output">Transcription Output</string>
+    <string name="source_microphone">Microphone</string>
+    <string name="source_test_file">Test File</string>
+    <string name="btn_start_streaming">Start Streaming</string>
+    <string name="btn_stop_streaming">Stop Streaming</string>
+
+    <!-- Batch tab -->
+    <string name="batch_title">Batch Transcription</string>
+    <string name="batch_subtitle">Upload audio to S3 and run transcription jobs</string>
+    <string name="label_s3_upload">S3 Upload</string>
+    <string name="label_job_config">Job Configuration</string>
+    <string name="label_actions">Actions</string>
+    <string name="label_result">Result</string>
+    <string name="label_language">Language</string>
+    <string name="label_language_mode">Language Detection</string>
+    <string name="label_output">Output:</string>
+    <string name="language_mode_manual">Manual</string>
+    <string name="language_mode_auto_detect">Auto-detect (single)</string>
+    <string name="language_mode_multi">Multi-language</string>
+    <string name="btn_select_languages">Tap to select languages…</string>
+    <string name="label_candidate_languages">Candidate Languages</string>
+    <string name="dialog_title_languages">Candidate Languages</string>
+<string name="language_mode_hint">Auto-detect identifies the language automatically. Multi-language requires 2+ candidate languages (one dialect per language).</string>
+    <string name="msg_select_at_least_two">Select at least 2 candidate languages</string>
+    <string name="msg_one_dialect_per_language">Note: select only one dialect per language (e.g. English US or English UK, not both).</string>
+    <string name="hint_job_name">Job name (optional)</string>
+    <string name="btn_refresh">Refresh</string>
+    <string name="btn_upload_s3">Upload Test File to S3</string>
+    <string name="btn_reset">Reset</string>
+    <string name="btn_start_job">Start Transcription Job</string>
+    <string name="btn_check_status">Check Status</string>
+    <string name="btn_list_jobs">List Jobs</string>
+    <string name="output_selected_bucket">Selected bucket</string>
+    <string name="output_service_managed">Service-managed</string>
+
+    <!-- Messages -->
+    <string name="msg_mic_permission_required">Microphone permission is required</string>
+    <string name="msg_upload_first">Upload a test file first</string>
+    <string name="msg_enter_job_name">Enter a job name first</string>
+    <string name="msg_select_bucket">Select a bucket first</string>
+    <string name="msg_no_buckets">No S3 buckets found</string>
+    <string name="msg_job_started">Transcription job started!</string>
+    <string name="msg_connecting">[Connecting to Transcribe Streaming…]</string>
+    <string name="msg_done">[Done]</string>
+    <string name="msg_no_jobs">No transcription jobs found.</string>
+    <string name="msg_job_status">Job \'%1$s\' started.\nStatus: %2$s</string>
+    <string name="msg_error_start_job">Error starting job: %1$s</string>
+    <string name="msg_error_generic">Error: %1$s</string>
+    <string name="msg_uploaded_to">Uploaded to %1$s</string>
+    <string name="msg_upload_failed">Upload failed: %1$s</string>
+    <string name="msg_bucket_load_failed">Failed to list buckets: %1$s</string>
+    <string name="msg_streaming_error">Streaming error: %1$s</string>
+    <string name="msg_file_sent">[File fully sent: %1$d bytes]</string>
 </resources>

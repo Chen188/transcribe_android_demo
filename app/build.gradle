@@ -3,6 +3,12 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def localProps = new Properties()
+def localPropsFile = rootProject.file('local.properties')
+if (localPropsFile.exists()) {
+    localProps.load(localPropsFile.newDataInputStream())
+}
+
 android {
     namespace "com.example.androidtranscribe"
     compileSdk 34
@@ -16,14 +22,12 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        // Inject AWS credentials from gradle.properties into BuildConfig.
-        buildConfigField "String", "AWS_REGION", "\"${project.findProperty('AWS_REGION') ?: 'us-east-1'}\""
-        buildConfigField "String", "AWS_ACCESS_KEY", "\"${project.findProperty('AWS_ACCESS_KEY') ?: ''}\""
-        buildConfigField "String", "AWS_SECRET_KEY", "\"${project.findProperty('AWS_SECRET_KEY') ?: ''}\""
+        buildConfigField "String", "AWS_REGION", "\"${localProps.getProperty('AWS_REGION', 'us-east-1')}\""
+        buildConfigField "String", "AWS_ACCESS_KEY", "\"${localProps.getProperty('AWS_ACCESS_KEY', '')}\""
+        buildConfigField "String", "AWS_SECRET_KEY", "\"${localProps.getProperty('AWS_SECRET_KEY', '')}\""
     }
 
     buildTypes {
-
         create("customDebugType") {
             debuggable = true
         }
@@ -32,32 +36,47 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
     }
+
     kotlinOptions {
         jvmTarget = '11'
     }
+
     buildFeatures {
         buildConfig true
+        viewBinding true
     }
 }
 
 dependencies {
-
+    // AndroidX
     implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.fragment:fragment-ktx:1.6.2'
+
+    // Material Design
+    implementation 'com.google.android.material:material:1.11.0'
+
+    // AWS SDK
     implementation("aws.sdk.kotlin:transcribe:1.6.27")
     implementation("aws.sdk.kotlin:transcribestreaming:1.6.27")
     implementation("aws.sdk.kotlin:s3:1.6.27") {
         exclude group: "xmlpull", module: "xmlpull"
     }
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.11.0'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    // Logging
     implementation 'org.slf4j:slf4j-android:1.7.36'
-    testImplementation 'junit:junit:4.+'
+
+    // Desugaring
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
+
+    // Testing
+    testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
 }
