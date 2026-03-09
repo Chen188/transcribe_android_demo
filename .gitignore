@@ -8,7 +8,7 @@
 .externalNativeBuild
 .cxx
 /app/build
-*.apk
+*.apkf
 *.aab
 *.ap_
 *.dex

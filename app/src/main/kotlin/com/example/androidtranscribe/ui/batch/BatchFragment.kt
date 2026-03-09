@@ -90,6 +90,7 @@ class BatchFragment : Fragment() {
         val testFiles = arrayOf(
             getString(R.string.test_file_single),
             getString(R.string.test_file_multi),
+            getString(R.string.test_file_cn_en),
         )
         binding.spinnerTestFile.adapter = ArrayAdapter(
             requireContext(), android.R.layout.simple_spinner_dropdown_item, testFiles,
@@ -205,10 +206,10 @@ class BatchFragment : Fragment() {
             binding.btnPreview.text = getString(R.string.btn_preview)
             return
         }
-        val fileName = if (binding.spinnerTestFile.selectedItemPosition == 1) {
-            "test_audio_multi_speaker.wav"
-        } else {
-            "test_audio.pcm"
+        val fileName = when (binding.spinnerTestFile.selectedItemPosition) {
+            1 -> "test_audio_multi_speaker.wav"
+            2 -> "cn_en_mix_audio_16k.m4a"
+            else -> "test_audio.pcm"
         }
         binding.btnPreview.text = getString(R.string.btn_stop_preview)
         viewLifecycleOwner.lifecycleScope.launch {
@@ -258,32 +259,37 @@ class BatchFragment : Fragment() {
             return
         }
 
-        val isMultiSpeaker = binding.spinnerTestFile.selectedItemPosition == 1
+        val selectedPos = binding.spinnerTestFile.selectedItemPosition
 
         viewLifecycleOwner.lifecycleScope.launch {
             val s3Client = AwsClientFactory.s3(requireContext())
             try {
-                val wavBytes = if (isMultiSpeaker) {
-                    withContext(Dispatchers.IO) {
-                        requireContext().assets.open("test_audio_multi_speaker.wav").readBytes()
+                val (uploadBytes, key) = when (selectedPos) {
+                    1 -> {
+                        val bytes = withContext(Dispatchers.IO) {
+                            requireContext().assets.open("test_audio_multi_speaker.wav").readBytes()
+                        }
+                        bytes to "transcribe-test/test_audio_multi_speaker.wav"
                     }
-                } else {
-                    val pcmBytes = withContext(Dispatchers.IO) {
-                        requireContext().assets.open("test_audio.pcm").readBytes()
+                    2 -> {
+                        val bytes = withContext(Dispatchers.IO) {
+                            requireContext().assets.open("cn_en_mix_audio_16k.m4a").readBytes()
+                        }
+                        bytes to "transcribe-test/cn_en_mix_audio_16k.m4a"
                     }
-                    AudioUtils.wrapPcmInWav(pcmBytes)
-                }
-                val key = if (isMultiSpeaker) {
-                    "transcribe-test/test_audio_multi_speaker.wav"
-                } else {
-                    "transcribe-test/test_audio.wav"
+                    else -> {
+                        val pcmBytes = withContext(Dispatchers.IO) {
+                            requireContext().assets.open("test_audio.pcm").readBytes()
+                        }
+                        AudioUtils.wrapPcmInWav(pcmBytes) to "transcribe-test/test_audio.wav"
+                    }
                 }
 
                 withContext(Dispatchers.IO) {
                     s3Client.putObject(PutObjectRequest {
                         this.bucket = bucket
                         this.key = key
-                        body = ByteStream.fromBytes(wavBytes)
+                        body = ByteStream.fromBytes(uploadBytes)
                     })
                 }
 
@@ -347,7 +353,7 @@ class BatchFragment : Fragment() {
                     media = Media { mediaFileUri = s3Uri }
                     mediaFormat = when {
                         s3Uri.endsWith(".mp3") -> MediaFormat.Mp3
-                        s3Uri.endsWith(".mp4") -> MediaFormat.Mp4
+                        s3Uri.endsWith(".mp4") || s3Uri.endsWith(".m4a") -> MediaFormat.Mp4
                         s3Uri.endsWith(".flac") -> MediaFormat.Flac
                         s3Uri.endsWith(".ogg") -> MediaFormat.Ogg
                         else -> MediaFormat.Wav
@@ -580,24 +586,31 @@ class BatchFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val client = AwsClientFactory.transcribe(requireContext())
             try {
-                val request = ListTranscriptionJobsRequest { maxResults = 10 }
+                val request = ListTranscriptionJobsRequest { maxResults = 20 }
                 val response = withContext(Dispatchers.IO) {
                     client.listTranscriptionJobs(request)
                 }
 
-                val sb = StringBuilder("Recent Transcription Jobs:\n\n")
-                response.transcriptionJobSummaries?.forEach { summary ->
-                    sb.appendLine("Name: ${summary.transcriptionJobName}")
-                    sb.appendLine("  Status: ${summary.transcriptionJobStatus}")
-                    sb.appendLine("  Created: ${summary.creationTime}")
-                    sb.appendLine()
+                val summaries = response.transcriptionJobSummaries
+                if (summaries.isNullOrEmpty()) {
+                    binding.txtBatchResult.text = getString(R.string.msg_no_jobs)
+                    return@launch
                 }
 
-                if (response.transcriptionJobSummaries.isNullOrEmpty()) {
-                    sb.append(getString(R.string.msg_no_jobs))
-                }
+                val displayItems = summaries.map { s ->
+                    val status = s.transcriptionJobStatus?.value ?: "?"
+                    "${s.transcriptionJobName}  [$status]"
+                }.toTypedArray()
 
-                binding.txtBatchResult.text = sb.toString()
+                MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(getString(R.string.dialog_title_jobs))
+                    .setItems(displayItems) { _, which ->
+                        val jobName = summaries[which].transcriptionJobName ?: return@setItems
+                        binding.edtJobName.setText(jobName)
+                        checkJobStatus()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
             } catch (e: Exception) {
                 binding.txtBatchResult.text = getString(R.string.msg_error_generic, e.message)
             } finally {

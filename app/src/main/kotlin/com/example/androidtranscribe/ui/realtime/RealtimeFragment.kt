@@ -19,6 +19,7 @@ import aws.sdk.kotlin.services.transcribestreaming.model.AudioEvent
 import aws.sdk.kotlin.services.transcribestreaming.model.AudioStream
 import aws.sdk.kotlin.services.transcribestreaming.model.LanguageCode
 import aws.sdk.kotlin.services.transcribestreaming.model.MediaEncoding
+import aws.sdk.kotlin.services.transcribestreaming.model.PartialResultsStability
 import aws.sdk.kotlin.services.transcribestreaming.model.StartStreamTranscriptionRequest
 import aws.sdk.kotlin.services.transcribestreaming.model.TranscriptResultStream
 import com.example.androidtranscribe.R
@@ -46,6 +47,19 @@ class RealtimeFragment : Fragment() {
     private var isStreaming = false
     private var streamingJob: Job? = null
     private val previewPlayer = AudioPreviewPlayer()
+    private val resultEntries = mutableListOf<ResultEntry>()
+
+    private sealed class ResultEntry {
+        data class System(val text: String) : ResultEntry()
+        data class Transcription(
+            val isPartial: Boolean,
+            val transcript: String,
+            val langTag: String,
+            val startTime: Double?,
+            val endTime: Double?,
+            val speakerSegments: List<Pair<String, String>>?,
+        ) : ResultEntry()
+    }
 
     private val requestAudioPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -103,6 +117,7 @@ class RealtimeFragment : Fragment() {
         val sources = arrayOf(
             getString(R.string.source_test_file),
             getString(R.string.source_test_file_multi),
+            getString(R.string.source_test_file_cn_en),
             getString(R.string.source_microphone),
         )
         binding.spinnerSource.adapter = ArrayAdapter(
@@ -158,8 +173,23 @@ class RealtimeFragment : Fragment() {
 
         binding.txtSelectLanguages.setOnClickListener { showLanguagePickerDialog() }
 
+        // Stabilization
+        val stabilizationOptions = arrayOf(
+            getString(R.string.stabilization_off),
+            getString(R.string.stabilization_high),
+            getString(R.string.stabilization_medium),
+            getString(R.string.stabilization_low),
+        )
+        binding.spinnerStabilization.adapter = ArrayAdapter(
+            requireContext(),
+            android.R.layout.simple_spinner_dropdown_item,
+            stabilizationOptions,
+        )
+
         binding.btnPreview.setOnClickListener { togglePreview() }
         binding.btnStartStreaming.setOnClickListener { toggleStreaming() }
+        binding.switchFinalOnly.setOnCheckedChangeListener { _, _ -> renderResults() }
+        binding.switchShowTimestamps.setOnCheckedChangeListener { _, _ -> renderResults() }
 
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -206,10 +236,10 @@ class RealtimeFragment : Fragment() {
             return
         }
         val selected = binding.spinnerSource.selectedItem.toString()
-        val fileName = if (selected == getString(R.string.source_test_file_multi)) {
-            "test_audio_multi_speaker.wav"
-        } else {
-            "test_audio.pcm"
+        val fileName = when (selected) {
+            getString(R.string.source_test_file_multi) -> "test_audio_multi_speaker.wav"
+            getString(R.string.source_test_file_cn_en) -> "cn_en_mix_audio_16k.m4a"
+            else -> "test_audio.pcm"
         }
         binding.btnPreview.text = getString(R.string.btn_stop_preview)
         viewLifecycleOwner.lifecycleScope.launch {
@@ -227,6 +257,7 @@ class RealtimeFragment : Fragment() {
         val selected = binding.spinnerSource.selectedItem.toString()
         val useMic = selected == getString(R.string.source_microphone)
         val useMultiSpeakerFile = selected == getString(R.string.source_test_file_multi)
+        val useCnEnFile = selected == getString(R.string.source_test_file_cn_en)
 
         if (useMic && ContextCompat.checkSelfPermission(
                 requireContext(), Manifest.permission.RECORD_AUDIO,
@@ -245,6 +276,12 @@ class RealtimeFragment : Fragment() {
         previewPlayer.stop()
         binding.btnPreview.text = getString(R.string.btn_preview)
         val speakerIdEnabled = binding.switchSpeakerId.isChecked
+        val stabilityLevel = when (binding.spinnerStabilization.selectedItemPosition) {
+            1 -> PartialResultsStability.High
+            2 -> PartialResultsStability.Medium
+            3 -> PartialResultsStability.Low
+            else -> null
+        }
 
         isStreaming = true
         binding.btnStartStreaming.text = getString(R.string.btn_stop_streaming)
@@ -253,6 +290,8 @@ class RealtimeFragment : Fragment() {
         binding.spinnerLanguage.isEnabled = false
         binding.txtSelectLanguages.isEnabled = false
         binding.switchSpeakerId.isEnabled = false
+        binding.spinnerStabilization.isEnabled = false
+        resultEntries.clear()
         @Suppress("SetTextI18n")
         binding.txtStreamingResult.text = ""
 
@@ -282,10 +321,11 @@ class RealtimeFragment : Fragment() {
             val audioFlow = when {
                 useMic -> buildMicFlow()
                 useMultiSpeakerFile -> buildFileFlow("test_audio_multi_speaker.wav", wavHeader = true)
+                useCnEnFile -> buildDecodedFlow("cn_en_mix_audio_16k.m4a")
                 else -> buildFileFlow("test_audio.pcm", wavHeader = false)
             }
             val statusMsg = if (useMic) "Speak now." else "Streaming file..."
-            streamTranscribe(audioFlow, statusMsg, speakerIdEnabled, languageMode)
+            streamTranscribe(audioFlow, statusMsg, speakerIdEnabled, languageMode, stabilityLevel)
         }
     }
 
@@ -296,6 +336,23 @@ class RealtimeFragment : Fragment() {
             if (bytesRead > 0) {
                 emit(AudioStream.AudioEvent(AudioEvent { audioChunk = buffer.copyOf(bytesRead) }))
             }
+        }
+    }
+
+    private fun buildDecodedFlow(fileName: String): Flow<AudioStream> = flow {
+        val pcmBytes = AudioUtils.decodeAssetToPcm(requireContext(), fileName)
+        var offset = 0
+        var totalSent = 0
+        while (offset < pcmBytes.size && isStreaming) {
+            val end = minOf(offset + AudioUtils.CHUNK_SIZE_BYTES, pcmBytes.size)
+            val chunk = pcmBytes.copyOfRange(offset, end)
+            emit(AudioStream.AudioEvent(AudioEvent { audioChunk = chunk }))
+            totalSent += chunk.size
+            offset = end
+            delay(30)
+        }
+        withContext(Dispatchers.Main) {
+            addSystemEntry(getString(R.string.msg_file_sent, totalSent))
         }
     }
 
@@ -315,9 +372,7 @@ class RealtimeFragment : Fragment() {
         }
         inputStream.close()
         withContext(Dispatchers.Main) {
-            _binding?.txtStreamingResult?.append(
-                getString(R.string.msg_file_sent, totalSent) + "\n",
-            )
+            addSystemEntry(getString(R.string.msg_file_sent, totalSent))
         }
     }
 
@@ -326,6 +381,7 @@ class RealtimeFragment : Fragment() {
         statusMsg: String,
         speakerIdEnabled: Boolean,
         languageMode: Int,
+        stabilityLevel: PartialResultsStability?,
     ) {
         val client = AwsClientFactory.transcribeStreaming(requireContext())
         try {
@@ -353,25 +409,25 @@ class RealtimeFragment : Fragment() {
                 if (speakerIdEnabled) {
                     showSpeakerLabel = true
                 }
+                if (stabilityLevel != null) {
+                    enablePartialResultsStabilization = true
+                    partialResultsStability = stabilityLevel
+                }
             }
 
             withContext(Dispatchers.Main) {
-                _binding?.txtStreamingResult?.append(
-                    getString(R.string.msg_connecting) + "\n",
-                )
+                addSystemEntry(getString(R.string.msg_connecting))
             }
 
             client.startStreamTranscription(request) { resp ->
                 withContext(Dispatchers.Main) {
-                    _binding?.txtStreamingResult?.append("[Connected. $statusMsg]\n")
+                    addSystemEntry("[Connected. $statusMsg]")
                 }
 
                 val resultStream = resp.transcriptResultStream
                 if (resultStream == null) {
                     withContext(Dispatchers.Main) {
-                        _binding?.txtStreamingResult?.append(
-                            "[Error: transcriptResultStream is null]\n",
-                        )
+                        addSystemEntry("[Error: transcriptResultStream is null]")
                     }
                     return@startStreamTranscription
                 }
@@ -383,14 +439,20 @@ class RealtimeFragment : Fragment() {
                             val text = alt?.transcript
                             if (!text.isNullOrEmpty()) {
                                 val langTag = result.languageCode?.value?.let { " [$it]" } ?: ""
-                                val display = if (!result.isPartial && speakerIdEnabled) {
-                                    formatWithSpeakers(alt, langTag)
-                                } else {
-                                    val prefix = if (result.isPartial) "[partial]" else "[final]"
-                                    "$prefix$langTag $text"
-                                }
+                                val speakerSegments = if (!result.isPartial && speakerIdEnabled) {
+                                    extractSpeakerSegments(alt)
+                                } else null
+                                val entry = ResultEntry.Transcription(
+                                    isPartial = result.isPartial,
+                                    transcript = text,
+                                    langTag = langTag,
+                                    startTime = result.startTime,
+                                    endTime = result.endTime,
+                                    speakerSegments = speakerSegments,
+                                )
                                 withContext(Dispatchers.Main) {
-                                    _binding?.txtStreamingResult?.append("$display\n")
+                                    resultEntries.add(entry)
+                                    appendEntry(entry)
                                     _binding?.scrollStreaming?.fullScroll(View.FOCUS_DOWN)
                                 }
                             }
@@ -400,13 +462,13 @@ class RealtimeFragment : Fragment() {
             }
 
             withContext(Dispatchers.Main) {
-                _binding?.txtStreamingResult?.append(getString(R.string.msg_done) + "\n")
+                addSystemEntry(getString(R.string.msg_done))
             }
         } catch (e: CancellationException) {
             // Normal cancellation when user stops streaming.
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                _binding?.txtStreamingResult?.append("\n[Error: ${e.message}]\n")
+                addSystemEntry("[Error: ${e.message}]")
                 showToast(getString(R.string.msg_streaming_error, e.message))
             }
         } finally {
@@ -415,12 +477,11 @@ class RealtimeFragment : Fragment() {
         }
     }
 
-    private fun formatWithSpeakers(
+    private fun extractSpeakerSegments(
         alt: aws.sdk.kotlin.services.transcribestreaming.model.Alternative,
-        langTag: String,
-    ): String {
+    ): List<Pair<String, String>>? {
         val items = alt.items
-        if (items.isNullOrEmpty()) return "[final]$langTag ${alt.transcript}"
+        if (items.isNullOrEmpty()) return null
 
         val segments = mutableListOf<Pair<String, StringBuilder>>()
         var curSpeaker: String? = null
@@ -442,8 +503,66 @@ class RealtimeFragment : Fragment() {
             }
         }
 
-        if (segments.isEmpty()) return "[final]$langTag ${alt.transcript}"
-        return segments.joinToString("\n") { (spk, text) -> "[final]$langTag [$spk] $text" }
+        if (segments.isEmpty()) return null
+        return segments.map { (spk, text) -> spk to text.toString() }
+    }
+
+    private fun addSystemEntry(text: String) {
+        val entry = ResultEntry.System(text)
+        resultEntries.add(entry)
+        appendEntry(entry)
+    }
+
+    private fun appendEntry(entry: ResultEntry) {
+        val line = renderEntry(entry) ?: return
+        _binding?.txtStreamingResult?.append("$line\n")
+    }
+
+    private fun renderEntry(entry: ResultEntry): String? {
+        return when (entry) {
+            is ResultEntry.System -> entry.text
+            is ResultEntry.Transcription -> {
+                val finalOnly = _binding?.switchFinalOnly?.isChecked == true
+                if (finalOnly && entry.isPartial) return null
+
+                val showTs = _binding?.switchShowTimestamps?.isChecked == true
+                val tsTag = if (showTs) {
+                    val start = entry.startTime ?: 0.0
+                    val end = entry.endTime ?: 0.0
+                    " [${formatTimestamp(start)}-${formatTimestamp(end)}]"
+                } else ""
+
+                val segments = entry.speakerSegments
+                if (segments != null) {
+                    segments.joinToString("\n") { (spk, text) ->
+                        "[final]${entry.langTag}$tsTag [$spk] $text"
+                    }
+                } else {
+                    val prefix = if (entry.isPartial) "[partial]" else "[final]"
+                    "$prefix${entry.langTag}$tsTag ${entry.transcript}"
+                }
+            }
+        }
+    }
+
+    private fun renderResults() {
+        val sb = StringBuilder()
+        for (entry in resultEntries) {
+            val line = renderEntry(entry) ?: continue
+            sb.appendLine(line)
+        }
+        _binding?.txtStreamingResult?.text = sb
+        _binding?.scrollStreaming?.post {
+            _binding?.scrollStreaming?.fullScroll(View.FOCUS_DOWN)
+        }
+    }
+
+    private fun formatTimestamp(seconds: Double): String {
+        val totalSec = seconds.toInt()
+        val min = totalSec / 60
+        val sec = totalSec % 60
+        val millis = ((seconds - totalSec) * 100).toInt()
+        return "%d:%02d.%02d".format(min, sec, millis)
     }
 
     private fun stopStreaming() {
@@ -458,6 +577,7 @@ class RealtimeFragment : Fragment() {
         _binding?.spinnerLanguage?.isEnabled = true
         _binding?.txtSelectLanguages?.isEnabled = true
         _binding?.switchSpeakerId?.isEnabled = true
+        _binding?.spinnerStabilization?.isEnabled = true
     }
 
     private fun showToast(message: String) {
